@@ -1,9 +1,0 @@
-{
-    "bot_token": "7942973073:AAHOTQeXBEJF5T9VgRxyFf21oLpwD26x5EE",
-    "database": {
-        "host": "localhost",
-        "user": "root",
-        "password": "saman9828",
-        "database": "telegram_bot"
-    }
-}
