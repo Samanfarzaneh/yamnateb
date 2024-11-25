@@ -1,5 +1,7 @@
 # views.py
 import json
+import os
+
 import mysql.connector
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
@@ -291,28 +293,11 @@ async def remove_from_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error in remove_from_cart: {e}")
         await send_message(update, "خطا در حذف محصول از سبد خرید.")
 
-# حذف از سبد خرید
-async def remove_from_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-
-        cart_id = int(query.data.split(":")[1])
-        db_cursor.execute("DELETE FROM cart WHERE id = %s", (cart_id,))
-        db_connection.commit()
-
-        # دکمه‌های ادامه
-        continue_button = InlineKeyboardButton("مشاهده سبد خرید", callback_data="show_cart")
-        back_button = InlineKeyboardButton("بازگشت به محصولات", callback_data="show_categories")
-        markup = InlineKeyboardMarkup([[continue_button], [back_button]])
-
-        await query.message.reply_text("محصول از سبد خرید حذف شد.", reply_markup=markup)
-    except Exception as e:
-        print(f"Error in remove_from_cart: {e}")
-        await send_message(update, "خطا در حذف محصول از سبد خرید.")
-
 # ثبت سفارش نهایی
-# ثبت سفارش نهایی
+from telegram import InputFile
+from telegram.ext import MessageHandler, filters
+
+
 async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -321,24 +306,18 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = query.from_user.id
 
         # محاسبه مجموع قیمت
-        db_cursor.execute("""
-            SELECT SUM(c.quantity * p.price)
-            FROM cart c
-            JOIN products p ON c.product_id = p.id
-            WHERE c.user_id = %s
+        db_cursor.execute(""" 
+            SELECT SUM(c.quantity * p.price) 
+            FROM cart c 
+            JOIN products p ON c.product_id = p.id 
+            WHERE c.user_id = %s 
         """, (user_id,))
         total_price = db_cursor.fetchone()[0]
 
         if total_price is None or total_price == 0:
             # اگر سبد خرید خالی باشد
             await send_message(update, "سبد خرید شما خالی است❗")
-
-            # # دکمه برای نمایش محصولات
-            # show_products_button = InlineKeyboardButton("نمایش محصولات", callback_data="show_categories")
-            # markup = InlineKeyboardMarkup([[show_products_button]])
             await send_message(update, "برای مشاهده محصولات، می توانید از بین دسته بندی ها انتخاب کنید:")
-
-            # نمایش دسته‌بندی‌ها پس از خالی بودن سبد خرید
             await show_categories(update, context)
             return
 
@@ -353,9 +332,41 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_cursor.execute("DELETE FROM cart WHERE user_id = %s", (user_id,))
         db_connection.commit()
 
-        await send_message(update, f"سفارش شما با موفقیت ثبت شد. مجموع: {total_price} تومان.")
+        # ارسال پیام با اطلاعات حساب
+        message = f"""
+        همراه گرامی، برای تکمیل سفارش خود لطفاً مبلغ {total_price} تومان را به شماره حساب زیر واریز نمایید و رسید واریزی خود را در همین صفحه ارسال کنید:
+
+        6273 8110 8756 8425
+        به نام سامان فرزانه
+        """
+
+        await send_message(update, message)
+
     except Exception as e:
         print(f"Error in confirm_order: {e}")
-        # در صورت بروز خطا، سبد خرید خالی است و دکمه نمایش محصولات نمایش داده می‌شود
         await send_message(update, "سبد خرید شما خالی است.")
         await show_categories(update, context)
+
+
+async def handle_payment_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        # دریافت عکس از پیام
+        photo_file = update.message.photo[-1]  # انتخاب بزرگ‌ترین سایز عکس
+        file_id = photo_file.file_id  # گرفتن شناسه فایل
+
+        # دریافت شیء فایل
+        file = await context.bot.get_file(file_id)
+
+        # تعیین مسیر ذخیره فایل
+        file_path = os.path.join("payment_receipts", f"payment_receipt_{update.message.message_id}.jpg")
+
+        # دانلود فایل به صورت async
+        await file.download_to_drive(file_path)  # دانلود و ذخیره فایل در مسیر مشخص
+
+        # تایید دریافت
+        await update.message.reply_text("باتشکر از خرید شما"
+                                        " پس از بررسی رسید و تایید آن همکاران ما با شما تماس خواهند گرفت.")
+
+    except Exception as e:
+        print(f"Error in handle_payment_receipt: {e}")
+        await update.message.reply_text("خطا در دریافت رسید واریز. لطفا دوباره امتحان کنید.")
