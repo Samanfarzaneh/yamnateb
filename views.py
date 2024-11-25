@@ -47,25 +47,44 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for category in categories
         ]
         markup = InlineKeyboardMarkup(keyboard)
-        await send_message(update, "دسته‌بندی‌ها را انتخاب کنید:", reply_markup=markup)
+        await send_message(update, "دسته‌بندی‌ها:", reply_markup=markup)
     except Exception as e:
         print(f"Error in show_categories: {e}")
         await send_message(update, "خطا در بارگذاری دسته‌بندی‌ها.")
 
-# نمایش محصولات بر اساس دسته‌بندی
+
+# تابعی برای بازگشت به دسته‌بندی‌ها
+async def handle_back_to_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        # فراخوانی تابع نمایش دسته‌بندی‌ها
+        await show_categories(update, context)
+    except Exception as e:
+        print(f"Error in handle_back_to_categories: {e}")
+        await send_message(update, "خطا در بازگشت به دسته‌بندی‌ها.")
+
+
 async def show_products_by_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
         await query.answer()
 
         category_id = int(query.data.split(":")[1])
-        db_cursor.execute("SELECT id, name, price FROM products WHERE category_id = %s", (category_id,))
+
+        # دریافت محصولات مرتبط با دسته‌بندی از جدول واسط product_categories
+        db_cursor.execute("""
+            SELECT p.id, p.name, p.price
+            FROM products p
+            JOIN product_categories pc ON p.id = pc.product_id
+            WHERE pc.category_id = %s
+        """, (category_id,))
+
         products = db_cursor.fetchall()
 
         if not products:
             await send_message(update, "هیچ محصولی در این دسته‌بندی موجود نیست.")
             return
 
+        # ساخت کیبورد برای نمایش محصولات
         keyboard = [
             [InlineKeyboardButton(f"{product[1]} - {product[2]} تومان", callback_data=f"add_to_cart:{product[0]}")]
             for product in products
@@ -81,6 +100,7 @@ async def show_products_by_category(update: Update, context: ContextTypes.DEFAUL
     except Exception as e:
         print(f"Error in show_products_by_category: {e}")
         await send_message(update, "خطا در نمایش محصولات.")
+
 
 # جستجوی محصولات
 async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,7 +167,7 @@ async def add_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # دکمه‌های ادامه
         continue_button = InlineKeyboardButton("مشاهده سبد خرید", callback_data="show_cart")
-        back_button = InlineKeyboardButton("بازگشت به محصولات", callback_data="show_products")
+        back_button = InlineKeyboardButton("بازگشت به محصولات", callback_data="show_categories")
         markup = InlineKeyboardMarkup([[continue_button], [back_button]])
 
         await query.message.reply_text("محصول به سبد خرید اضافه شد.", reply_markup=markup)
@@ -156,7 +176,6 @@ async def add_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_message(update, "خطا در افزودن محصول به سبد خرید.")
 
 
-# نمایش سبد خرید با دکمه‌های افزایش و کاهش تعداد
 # تابع برای افزایش تعداد محصول
 async def increase_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -174,7 +193,6 @@ async def increase_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in increase_quantity: {e}")
         await send_message(update, "خطا در افزایش تعداد محصول.")
-
 
 
 # تابع برای کاهش تعداد محصول
@@ -204,6 +222,8 @@ async def decrease_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_message(update, "خطا در کاهش تعداد محصول.")
 
 
+
+# تابع برای نمایش سبد خرید
 async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -224,6 +244,7 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = "سبد خرید شما:\n\n"
         keyboard = []
 
+        # نمایش هر محصول به همراه دکمه‌های کم و زیاد کردن تعداد
         for item in cart_items:
             item_id, name, quantity, price = item
             total_price += quantity * price
@@ -232,13 +253,15 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # دکمه‌های افزایش و کاهش تعداد
             increase_button = InlineKeyboardButton("➕", callback_data=f"increase_quantity:{item_id}")
             decrease_button = InlineKeyboardButton("➖", callback_data=f"decrease_quantity:{item_id}")
+
+            # هر محصول همراه با دکمه‌های افزایش و کاهش در یک ردیف نمایش داده می‌شود
+            keyboard.append([InlineKeyboardButton(f"{name} - تعداد: {quantity}", callback_data=f"product_{item_id}")])
             keyboard.append([increase_button, decrease_button])
 
-            # دکمه حذف محصول
-            remove_button = InlineKeyboardButton(f"❌ حذف {name}", callback_data=f"remove_from_cart:{item_id}")
-            keyboard.append([remove_button])
-
+        # نمایش مجموع قیمت
         response += f"\nمجموع: {total_price} تومان"
+
+        # دکمه ثبت سفارش
         keyboard.append([InlineKeyboardButton("✅ ثبت سفارش", callback_data="confirm_order")])
 
         markup = InlineKeyboardMarkup(keyboard)
@@ -247,6 +270,26 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error in show_cart: {e}")
         await send_message(update, "خطا در نمایش سبد خرید.")
 
+
+# تابع برای حذف محصول از سبد خرید
+async def remove_from_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+
+        cart_id = int(query.data.split(":")[1])
+        db_cursor.execute("DELETE FROM cart WHERE id = %s", (cart_id,))
+        db_connection.commit()
+
+        # دکمه‌های ادامه
+        continue_button = InlineKeyboardButton("مشاهده سبد خرید", callback_data="show_cart")
+        back_button = InlineKeyboardButton("بازگشت به محصولات", callback_data="show_categories")
+        markup = InlineKeyboardMarkup([[continue_button], [back_button]])
+
+        await query.message.reply_text("محصول از سبد خرید حذف شد.", reply_markup=markup)
+    except Exception as e:
+        print(f"Error in remove_from_cart: {e}")
+        await send_message(update, "خطا در حذف محصول از سبد خرید.")
 
 # حذف از سبد خرید
 async def remove_from_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -260,7 +303,7 @@ async def remove_from_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # دکمه‌های ادامه
         continue_button = InlineKeyboardButton("مشاهده سبد خرید", callback_data="show_cart")
-        back_button = InlineKeyboardButton("بازگشت به محصولات", callback_data="show_products")
+        back_button = InlineKeyboardButton("بازگشت به محصولات", callback_data="show_categories")
         markup = InlineKeyboardMarkup([[continue_button], [back_button]])
 
         await query.message.reply_text("محصول از سبد خرید حذف شد.", reply_markup=markup)
@@ -288,12 +331,12 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if total_price is None or total_price == 0:
             # اگر سبد خرید خالی باشد
-            await send_message(update, "سبد خرید شما خالی است.")
+            await send_message(update, "سبد خرید شما خالی است❗")
 
-            # دکمه برای نمایش محصولات
-            show_products_button = InlineKeyboardButton("نمایش محصولات", callback_data="show_categories")
-            markup = InlineKeyboardMarkup([[show_products_button]])
-            await send_message(update, "برای مشاهده محصولات، دکمه زیر را فشار دهید:", reply_markup=markup)
+            # # دکمه برای نمایش محصولات
+            # show_products_button = InlineKeyboardButton("نمایش محصولات", callback_data="show_categories")
+            # markup = InlineKeyboardMarkup([[show_products_button]])
+            await send_message(update, "برای مشاهده محصولات، می توانید از بین دسته بندی ها انتخاب کنید:")
 
             # نمایش دسته‌بندی‌ها پس از خالی بودن سبد خرید
             await show_categories(update, context)
