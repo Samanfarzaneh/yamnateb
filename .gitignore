@@ -1,0 +1,15 @@
+# Ignore PyCharm project files
+.idea/
+
+# Ignore compiled Python files
+__pycache__/
+
+# Ignore database files
+messages.db
+
+# Ignore config files (sensitive data)
+config.json
+
+# Ignore other unnecessary files
+*.pyc
+*.iml
