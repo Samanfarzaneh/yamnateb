@@ -7,8 +7,9 @@ __pycache__/
 # Ignore database files
 messages.db
 # Ignore receipets files
-payment_receipts
-receipts
+payment_receipts/
+receipts/
+
 
 # Ignore config files (sensitive data)
 config.json
