@@ -1,5 +1,4 @@
 
-Sure! Here's a README template for your Telegram bot in English:
 
 Telegram Bot Project
 This is a Telegram bot created using Python and python-telegram-bot library. The bot is designed to perform various actions using inline buttons and callback queries. You can use this bot to interact with users and perform different tasks.
