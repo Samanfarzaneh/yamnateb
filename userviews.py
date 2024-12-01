@@ -1,9 +1,7 @@
-# views.py
-import json
-import os
-
+# userviews.py
+import json, requests, os
 import mysql.connector
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
 from telegram.ext import ContextTypes
 
 # خواندن فایل کانفیگ
@@ -294,10 +292,8 @@ async def remove_from_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_message(update, "خطا در حذف محصول از سبد خرید.")
 
 # ثبت سفارش نهایی
-from telegram import InputFile
-from telegram.ext import MessageHandler, filters
 
-
+# ثبت سفارش نهایی
 async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -328,24 +324,43 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         db_connection.commit()
 
+        # # گرفتن شناسه سفارش ثبت شده
+        order_id = db_cursor.lastrowid
+
         # پاک کردن سبد خرید
         db_cursor.execute("DELETE FROM cart WHERE user_id = %s", (user_id,))
         db_connection.commit()
 
-        # ارسال پیام با اطلاعات حساب
+        # ارسال پیام به کاربر حاوی اطلاعات سفارش و شناسه سفارش
         message = f"""
-        همراه گرامی، برای تکمیل سفارش خود لطفاً مبلغ {total_price} تومان را به شماره حساب زیر واریز نمایید و رسید واریزی خود را در همین صفحه ارسال کنید:
-
-        6273 8110 8756 8425
-        به نام سامان فرزانه
+        همراه گرامی، برای تکمیل سفارش خود لطفاً مبلغ {total_price} تومان را به شماره حساب زیر واریز نمایید.
+        شناسه سفارش شما: {order_id}
         """
 
+        # ارسال پیام با اطلاعات سفارش
         await send_message(update, message)
-
+        context.user_data['total_price'] = total_price
+        context.user_data['order_id'] = order_id
+        return
     except Exception as e:
         print(f"Error in confirm_order: {e}")
-        await send_message(update, "سبد خرید شما خالی است.")
-        await show_categories(update, context)
+        await send_message(update, "خطا در ثبت سفارش.")
+
+
+# async def get_total_price_by_order_id(order_id):
+#     try:
+#         # اجرای کوئری برای گرفتن total_price از سفارش با order_id مشخص
+#         db_cursor.execute("SELECT total_price FROM orders WHERE order_id = %s", (order_id,))
+#         total_price = db_cursor.fetchone()[0]  # دریافت مقدار total_price
+#
+#         if total_price is None:
+#             print("سفارش پیدا نشد یا total_price موجود نیست.")
+#             return None
+#         return total_price
+#
+#     except Exception as e:
+#         print(f"Error: {e}")
+#         return None
 
 
 async def handle_payment_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -353,20 +368,45 @@ async def handle_payment_receipt(update: Update, context: ContextTypes.DEFAULT_T
         # دریافت عکس از پیام
         photo_file = update.message.photo[-1]  # انتخاب بزرگ‌ترین سایز عکس
         file_id = photo_file.file_id  # گرفتن شناسه فایل
-
+        total_price = context.user_data.get('total_price')
+        order_id = context.user_data.get('order_id')
         # دریافت شیء فایل
         file = await context.bot.get_file(file_id)
+        print(total_price,order_id)
+        # دریافت شناسه پیام (سفارش)
+        # order_id = update.message.message_id  # استفاده از شناسه پیام برای نام فایل
 
         # تعیین مسیر ذخیره فایل
-        file_path = os.path.join("payment_receipts", f"payment_receipt_{update.message.message_id}.jpg")
+        file_path = os.path.join("payment_receipts", f"payment_receipt_{order_id}.jpg")
 
         # دانلود فایل به صورت async
         await file.download_to_drive(file_path)  # دانلود و ذخیره فایل در مسیر مشخص
 
         # تایید دریافت
-        await update.message.reply_text("باتشکر از خرید شما"
-                                        " پس از بررسی رسید و تایید آن همکاران ما با شما تماس خواهند گرفت.")
+        await update.message.reply_text("باتشکر از خرید شما. "
+                                        "پس از بررسی رسید و تایید آن، همکاران ما با شما تماس خواهند گرفت.")
+        # total_price = await get_total_price_by_order_id(order_id)
+        # اطلاعات سفارش برای ارسال به کانال
+        order_details = f"سفارش جدید به شماره {order_id}  وبه مبلغ {total_price}دریافت شد."
+        await send_order_to_channel(order_details)
+        print("سفارش دریافت شد")
 
     except Exception as e:
         print(f"Error in handle_payment_receipt: {e}")
         await update.message.reply_text("خطا در دریافت رسید واریز. لطفا دوباره امتحان کنید.")
+
+
+async def send_order_to_channel(order_details):
+    try:
+        bot_token = "7942973073:AAHOTQeXBEJF5T9VgRxyFf21oLpwD26x5EE"  # توکن ربات دوم
+        channel_chat_id = "@yamnateb_orders"  # شناسه کانال
+
+        # ساخت یک شی Bot
+        bot = Bot(token=bot_token)
+
+        # ارسال پیام به کانال
+        await bot.send_message(chat_id=channel_chat_id, text=order_details)
+        print("پیام سفارش به کانال ارسال شد.")
+
+    except Exception as e:
+        print(f"خطا در ارسال پیام: {e}")
