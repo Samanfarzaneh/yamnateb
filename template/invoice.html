@@ -1,0 +1,108 @@
+import mysql.connector
+
+# اتصال به دیتابیس MySQL
+conn = mysql.connector.connect(
+    host="localhost",       # آدرس سرور دیتابیس
+    user="root",            # نام کاربری
+    password="password",    # رمز عبور
+    database="telegram_bot_shop"  # نام دیتابیس
+)
+
+cursor = conn.cursor()
+
+# فرض می‌کنیم که سفارش با id = 1 را می‌خواهیم نمایش دهیم
+order_id = 1
+
+# خواندن اطلاعات سفارش
+cursor.execute(f"SELECT * FROM orders WHERE id = {order_id}")
+order = cursor.fetchone()
+
+# خواندن جزئیات سفارش (محصولات)
+cursor.execute(f"""
+    SELECT p.name, od.quantity, od.price, (od.quantity * od.price) AS total_price
+    FROM order_details od
+    JOIN products p ON od.product_id = p.id
+    WHERE od.order_id = {order_id}
+""")
+order_details = cursor.fetchall()
+
+# بستن اتصال به دیتابیس
+conn.close()
+
+# محاسبه جمع کل و مالیات
+total_price = sum(detail[3] for detail in order_details)
+tax = total_price * 0.09  # مالیات ۹٪
+final_price = total_price + tax
+
+# ساخت HTML
+html_content = f"""
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>فاکتور خرید</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="invoice-container">
+        <header>
+            <h1>فاکتور خرید</h1>
+            <p>تاریخ: {order[3]}</p> <!-- تاریخ سفارش -->
+            <p>شناسه سفارش: {order[0]}</p>
+        </header>
+        <table>
+            <thead>
+                <tr>
+                    <th>نام کالا</th>
+                    <th>تعداد</th>
+                    <th>قیمت واحد (تومان)</th>
+                    <th>قیمت کل (تومان)</th>
+                </tr>
+            </thead>
+            <tbody>
+"""
+# افزودن محصولات به جدول
+for detail in order_details:
+    html_content += f"""
+    <tr>
+        <td>{detail[0]}</td> <!-- نام کالا -->
+        <td>{detail[1]}</td> <!-- تعداد -->
+        <td>{detail[2]:,.0f}</td> <!-- قیمت واحد -->
+        <td>{detail[3]:,.0f}</td> <!-- قیمت کل -->
+    </tr>
+"""
+
+# افزودن جمع کل، مالیات و مبلغ نهایی
+html_content += f"""
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="3">جمع کل</td>
+                    <td>{total_price:,.0f}</td>
+                </tr>
+                <tr>
+                    <td colspan="3">مالیات (۹٪)</td>
+                    <td>{tax:,.0f}</td>
+                </tr>
+                <tr>
+                    <td colspan="3">مبلغ نهایی</td>
+                    <td>{final_price:,.0f}</td>
+                </tr>
+            </tfoot>
+        </table>
+        <footer>
+            <p>شماره تماس: ۰۹۱۲۳۴۵۶۷۸۹</p>
+            <p>آدرس: تهران، خیابان انقلاب</p>
+        </footer>
+    </div>
+</body>
+</html>
+"""
+
+
+# ذخیره HTML در فایل
+with open("invoice.html", "w", encoding="utf-8") as f:
+    f.write(html_content)
+
+print("فاکتور با موفقیت تولید شد!")

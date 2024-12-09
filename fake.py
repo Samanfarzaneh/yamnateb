@@ -5,8 +5,8 @@ try:
     # اتصال به دیتابیس
     db_connection = mysql.connector.connect(
         host="localhost",
-        user="root",
-        password="saman9828",
+        user="samantel_saman",
+        password="Saman9828",
         database="telegram_bot_shop"
     )
 
@@ -72,7 +72,7 @@ try:
             (product_ids[3][0], category_ids[1][0])   # محصول 4 -> مد و لباس
         ]
 
-        # وارد کردن ارتباط محصولات با دسته‌بندی‌ها
+
         # استفاده از INSERT IGNORE برای جلوگیری از وارد کردن داده‌های تکراری
         db_cursor.executemany("INSERT IGNORE INTO product_categories (product_id, category_id) VALUES (%s, %s)", product_categories)
         db_connection.commit()

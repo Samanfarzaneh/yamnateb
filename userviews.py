@@ -1,5 +1,7 @@
 # userviews.py
-import json, requests, os
+import asyncio
+import json
+import os
 import mysql.connector
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
 from telegram.ext import ContextTypes
@@ -9,7 +11,6 @@ with open("config.json", "r") as config_file:
     config = json.load(config_file)
 
 DB_CONFIG = config["database"]
-
 # اتصال به MySQL
 db_connection = mysql.connector.connect(
     host=DB_CONFIG["host"],
@@ -18,6 +19,7 @@ db_connection = mysql.connector.connect(
     database=DB_CONFIG["database"]
 )
 db_cursor = db_connection.cursor()
+
 
 # تابعی برای ارسال پیام
 async def send_message(update: Update, message_text: str, reply_markup=None):
@@ -31,6 +33,7 @@ async def send_message(update: Update, message_text: str, reply_markup=None):
         await message.reply_text(message_text, reply_markup=reply_markup)
     except Exception as e:
         print(f"Error in send_message: {e}")
+
 
 # نمایش دسته‌بندی‌ها
 async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,6 +117,7 @@ async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error in search_products: {e}")
         await send_message(update, "خطا در جستجو.")
 
+
 # انجام جستجو بر اساس ورودی کاربر
 async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -137,12 +141,12 @@ async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error in handle_search: {e}")
         await send_message(update, "خطا در انجام جستجو.")
 
+
 # افزودن به سبد خرید
 async def add_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
         await query.answer()
-
         product_id = int(query.data.split(":")[1])
         user_id = query.from_user.id
 
@@ -222,7 +226,6 @@ async def decrease_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_message(update, "خطا در کاهش تعداد محصول.")
 
 
-
 # تابع برای نمایش سبد خرید
 async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -291,14 +294,79 @@ async def remove_from_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error in remove_from_cart: {e}")
         await send_message(update, "خطا در حذف محصول از سبد خرید.")
 
-# ثبت سفارش نهایی
+
+# تابع برای افزودن جزئیات سفارش
+async def print_cart_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = update.effective_user.id
+
+        # گرفتن اطلاعات سبد خرید از دیتابیس برای کاربر
+        db_cursor.execute("""
+            SELECT c.id, p.name, c.quantity, p.price
+            FROM cart c
+            JOIN products p ON c.product_id = p.id
+            WHERE c.user_id = %s
+        """, (user_id,))
+
+        # دریافت نتایج
+        cart_items = db_cursor.fetchall()
+
+        # اگر سبد خرید خالی بود
+        if not cart_items:
+            print(f"سبد خرید کاربر {user_id} خالی است.")
+            await send_message(update, "سبد خرید شما خالی است.")
+            return
+
+        # اگر سبد خرید پر باشد
+        print(f"سبد خرید کاربر {user_id}:")
+        for item in cart_items:
+            item_id, name, quantity, price = item
+            total_price = quantity * price
+            print(f"محصول: {name}, تعداد: {quantity}, قیمت هر واحد: {price} تومان, مجموع: {total_price} تومان")
+
+        # اگر نیاز دارید که پیامی هم به کاربر ارسال شود
+        await send_message(update, "اطلاعات سبد خرید در کنسول چاپ شد.")
+
+    except Exception as e:
+        print(f"Error in print_cart_items: {e}")
+        await send_message(update, "خطا در نمایش سبد خرید.")
+
+def get_product_price(db_connection, product_id):
+    # فرض کنید یک کوئری برای دریافت قیمت محصول از دیتابیس دارید
+    with db_connection.cursor() as cursor:
+        cursor.execute("SELECT price FROM products WHERE id = %s", (product_id,))
+        result = cursor.fetchone()
+        return result[0] if result else 0  # در صورت پیدا نکردن محصول قیمت پیش‌فرض 0
+
+def add_order_details(order_id, cart, db_connection):
+    print(order_id)
+    print(cart)
+    try:
+        with db_connection.cursor() as cursor:  # cursor را در داخل بلوک with تعریف می‌کنیم
+            for item in cart:
+                product_id = item[0]  # شناسه محصول
+                quantity = item[1]  # تعداد محصول
+                price_per_unit = get_product_price(db_connection, product_id)  # فراخوانی get_product_price
+
+                # اضافه کردن جزئیات به جدول order_details
+                cursor.execute("""
+                    INSERT INTO order_details (order_id, product_id, quantity, price_per_unit)
+                    VALUES (%s, %s, %s, %s)
+                """, (order_id, product_id, quantity, price_per_unit))
+
+            # ذخیره تغییرات در دیتابیس
+            db_connection.commit()
+    except Exception as e:
+        print(f"Error in add_order_details: {e}")
+        db_connection.rollback()  # در صورت بروز خطا تغییرات لغو می‌شود
+
 
 # ثبت سفارش نهایی
 async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    order_id = db_cursor.lastrowid
     try:
         query = update.callback_query
         await query.answer()
-
         user_id = query.from_user.id
 
         # محاسبه مجموع قیمت
@@ -324,8 +392,15 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         db_connection.commit()
 
-        # # گرفتن شناسه سفارش ثبت شده
+        # گرفتن شناسه سفارش ثبت شده
         order_id = db_cursor.lastrowid
+
+        # گرفتن جزئیات سبد خرید کاربر فعلی
+        db_cursor.execute("SELECT product_id, quantity FROM cart WHERE user_id = %s", (user_id,))
+        cart = db_cursor.fetchall()  # اینجا فقط سبد خرید کاربر فعلی رو می‌گیریم
+
+        # اضافه کردن جزئیات سفارش به جدول order_details
+        add_order_details(order_id, cart, db_connection)
 
         # پاک کردن سبد خرید
         db_cursor.execute("DELETE FROM cart WHERE user_id = %s", (user_id,))
@@ -336,8 +411,6 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         همراه گرامی، برای تکمیل سفارش خود لطفاً مبلغ {total_price} تومان را به شماره حساب زیر واریز نمایید.
         شناسه سفارش شما: {order_id}
         """
-
-        # ارسال پیام با اطلاعات سفارش
         await send_message(update, message)
         context.user_data['total_price'] = total_price
         context.user_data['order_id'] = order_id
@@ -345,22 +418,6 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error in confirm_order: {e}")
         await send_message(update, "خطا در ثبت سفارش.")
-
-
-# async def get_total_price_by_order_id(order_id):
-#     try:
-#         # اجرای کوئری برای گرفتن total_price از سفارش با order_id مشخص
-#         db_cursor.execute("SELECT total_price FROM orders WHERE order_id = %s", (order_id,))
-#         total_price = db_cursor.fetchone()[0]  # دریافت مقدار total_price
-#
-#         if total_price is None:
-#             print("سفارش پیدا نشد یا total_price موجود نیست.")
-#             return None
-#         return total_price
-#
-#     except Exception as e:
-#         print(f"Error: {e}")
-#         return None
 
 
 async def handle_payment_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -372,7 +429,7 @@ async def handle_payment_receipt(update: Update, context: ContextTypes.DEFAULT_T
         order_id = context.user_data.get('order_id')
         # دریافت شیء فایل
         file = await context.bot.get_file(file_id)
-        print(total_price,order_id)
+        print(total_price, order_id)
         # دریافت شناسه پیام (سفارش)
         # order_id = update.message.message_id  # استفاده از شناسه پیام برای نام فایل
 
@@ -387,8 +444,8 @@ async def handle_payment_receipt(update: Update, context: ContextTypes.DEFAULT_T
                                         "پس از بررسی رسید و تایید آن، همکاران ما با شما تماس خواهند گرفت.")
         # total_price = await get_total_price_by_order_id(order_id)
         # اطلاعات سفارش برای ارسال به کانال
-        order_details = f"سفارش جدید به شماره {order_id}  وبه مبلغ {total_price}دریافت شد."
-        await send_order_to_channel(order_details)
+        order_details_subject = f"سفارش جدید به شماره {order_id}  وبه مبلغ {total_price}دریافت شد."
+        await send_order_to_channel(order_details_subject)
         print("سفارش دریافت شد")
 
     except Exception as e:

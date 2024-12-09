@@ -1,0 +1,1 @@
+source /home/samantel/virtualenv/yamnateb_bot_shop/3.9/bin/activate && cd /home/samantel/yamnateb_bot_shop
