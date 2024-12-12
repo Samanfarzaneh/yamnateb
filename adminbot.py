@@ -1,90 +1,74 @@
-import mysql.connector
-import time
-import requests
-from telegram import Bot
 import json
-import sys  # برای خارج کردن برنامه در صورت خطا در اتصال
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ConversationHandler, filters, CallbackQueryHandler
+import mysql.connector
+from adminviews import start, receive_product_name, cancel, add_product, button, receive_product_price, is_admin, create_admin_menu, confirm_add_product
 
-# 🛠️ بارگذاری پیکربندی از فایل config.json
-try:
-    with open("config.json", "r") as config_file:
-        config = json.load(config_file)
-except Exception as e:
-    print(f"⚠️ خطا در خواندن فایل config.json: {e}")
-    sys.exit(1)  # پایان برنامه
+# بارگذاری توکن رباط از فایل config.json
+with open("config.json", "r") as config_file:
+    config = json.load(config_file)
 
-DB_CONFIG = config["database"]
-BOT2_TOKEN = config["admin_bot_token"]  # توکن از فایل پیکربندی خوانده می‌شود
-CHANNEL_ID = config["channel_id"]  # شناسه کانال از فایل پیکربندی خوانده می‌شود
+BOT_TOKEN = config.get("admin_bot_token")
+DB_CONFIG = config.get("database")
 
-# 🛠️ اتصال به MySQL (اتصال در ابتدای برنامه فقط یک‌بار انجام می‌شود)
+# اتصال به پایگاه داده
 try:
     db_connection = mysql.connector.connect(
-        host=DB_CONFIG["host"],
-        user=DB_CONFIG["user"],
-        password=DB_CONFIG["password"],
-        database=DB_CONFIG["database"]
+        host=DB_CONFIG.get("host"),
+        user=DB_CONFIG.get("user"),
+        password=DB_CONFIG.get("password"),
+        database=DB_CONFIG.get("database")
     )
     db_cursor = db_connection.cursor()
-    print("✅ اتصال به MySQL برقرار شد.")
-except mysql.connector.Error as e:
-    print(f"❌ خطا در اتصال به MySQL: {e}")
-    sys.exit(1)  # پایان برنامه
+except mysql.connector.Error as err:
+    print(f"خطا در اتصال به پایگاه داده: {err}")
+    exit(1)
 
+# ایجاد برنامه رباط
+application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# 🛠️ تابع ارسال پیام به کانال
-def send_message_to_channel(message):
-    try:
-        bot = Bot(token=BOT2_TOKEN)
-        bot.send_message(chat_id=CHANNEL_ID, text=message)
-        print("✅ پیام به کانال ارسال شد.")
-    except Exception as e:
-        print(f"⚠️ خطا در ارسال پیام به کانال: {e}")
+# تعریف وضعیت‌ها
+WAITING_FOR_PRODUCT_NAME = 1
+WAITING_FOR_PRODUCT_PRICE = 2
+WAITING_FOR_CATEGORY_SELECTION = 3
+WAITING_FOR_CONFIRMATION = 4
 
+# دیکشنری برای ذخیره وضعیت ورود کاربر
+user_login_status = {}
 
-# 🛠️ تابع برای بررسی سفارشات جدید
-def check_new_orders():
-    try:
-        # جستجو برای سفارشات جدید
-        db_cursor.execute("SELECT id, order_details FROM orders WHERE status = 'new'")
-        new_orders = db_cursor.fetchall()
+# تعریف ConversationHandler برای مدیریت وضعیت‌ها
+conversation_handler = ConversationHandler(
+    entry_points=[
+        CommandHandler("start", start),
+        CallbackQueryHandler(add_product, pattern='^add_product_menu$')
+    ],
+    states={
+        WAITING_FOR_PRODUCT_NAME: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_product_name),
+        ],
+        WAITING_FOR_CATEGORY_SELECTION: [
+            CallbackQueryHandler(button),
+        ],
+        WAITING_FOR_PRODUCT_PRICE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_product_price),
+        ],
+        WAITING_FOR_CONFIRMATION: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_add_product),
+        ]
+    },
+    fallbacks=[CommandHandler("cancel", cancel)],
+)
 
-        if new_orders:
-            print(f"📦 {len(new_orders)} سفارش جدید یافت شد.")
+# افزودن هندلرها به برنامه
+application.add_handler(conversation_handler)
 
-        # ارسال پیام برای هر سفارش جدید
-        for order in new_orders:
-            order_id = order[0]
-            order_details = order[1]
+# اضافه کردن هندلرهای اضافی
+application.add_handler(CommandHandler("add_product", add_product))  # از این به بعد در conversation_handler می‌آید
+application.add_handler(CallbackQueryHandler(button))  # هندلر برای دکمه‌ها
 
-            # ارسال پیام به کانال
-            send_message_to_channel(f"🛒 سفارش جدید:\n\nجزئیات: {order_details}")
-
-            # پس از ارسال، وضعیت سفارش به "ارسال شده" تغییر می‌کند
-            db_cursor.execute("UPDATE orders SET status = 'sent' WHERE id = %s", (order_id,))
-
-        if new_orders:
-            db_connection.commit()  # commit یک‌بار پس از تغییر تمام سفارشات
-
-    except mysql.connector.Error as e:
-        print(f"⚠️ خطا در اجرای دستورات MySQL: {e}")
-
-
-# 🛠️ حلقه بررسی سفارشات جدید
-def run_check_loop():
-    try:
-        while True:
-            check_new_orders()  # بررسی سفارشات جدید
-            time.sleep(60)  # هر 60 ثانیه یک‌بار بررسی می‌کند
-    except KeyboardInterrupt:
-        print("\n🛑 برنامه با دستور کاربر متوقف شد.")
-    finally:
-        if db_cursor:
-            db_cursor.close()
-        if db_connection:
-            db_connection.close()
-        print("📴 اتصال به MySQL بسته شد.")
-
-
+# راه‌اندازی رباط
 if __name__ == "__main__":
-    run_check_loop()  # شروع حلقه بررسی سفارشات
+    try:
+        print("🤖 رباط فعال شد...")
+        application.run_polling()
+    except Exception as e:
+        print(f"خطا در اجرای رباط: {e}")

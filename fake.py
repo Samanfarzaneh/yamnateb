@@ -1,13 +1,16 @@
 import mysql.connector
 from mysql.connector import Error
 
+db_cursor = None  # تعریف متغیر db_cursor قبل از استفاده
+db_connection = None  # تعریف متغیر db_connection قبل از استفاده
+
 try:
     # اتصال به دیتابیس
     db_connection = mysql.connector.connect(
-        host="localhost",
-        user="samantel_saman",
-        password="Saman9828",
-        database="telegram_bot_shop"
+        host="localhost",        # هاست
+        user="root",             # یوزر دیتابیس
+        password="saman9828",    # پسورد
+        database="telegram_bot_shop"  # نام دیتابیس
     )
 
     if db_connection.is_connected():
@@ -72,9 +75,14 @@ try:
             (product_ids[3][0], category_ids[1][0])   # محصول 4 -> مد و لباس
         ]
 
-
         # استفاده از INSERT IGNORE برای جلوگیری از وارد کردن داده‌های تکراری
         db_cursor.executemany("INSERT IGNORE INTO product_categories (product_id, category_id) VALUES (%s, %s)", product_categories)
+        db_connection.commit()
+
+        # اضافه کردن یوزر با شناسه 240066845 به دیتابیس
+        user_id = 240066845
+        username = 'admin'  # یا نام کاربری دلخواه
+        db_cursor.execute("INSERT INTO admin (user_id, username) VALUES (%s, %s) ON DUPLICATE KEY UPDATE username = %s", (user_id, username, username))
         db_connection.commit()
 
 except Error as e:
@@ -84,6 +92,6 @@ finally:
     # بستن ارتباط با دیتابیس
     if db_cursor:
         db_cursor.close()
-    if db_connection.is_connected():
+    if db_connection and db_connection.is_connected():
         db_connection.close()
         print("Connection closed.")
