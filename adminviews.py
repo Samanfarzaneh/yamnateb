@@ -1,7 +1,11 @@
 import json
+from db import DatabaseConnection
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ConversationHandler, CallbackQueryHandler
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ConversationHandler, \
+    CallbackQueryHandler, CallbackContext
 import mysql.connector
+from admin import edit_product
+
 
 # بارگذاری کانفیگ
 with open("config.json", "r") as config_file:
@@ -22,11 +26,16 @@ except mysql.connector.Error as err:
     print(f"خطا در اتصال به پایگاه داده: {err}")
     exit()
 
+
+
 # وضعیت‌های مکالمه
 WAITING_FOR_PRODUCT_NAME = 1
 WAITING_FOR_PRODUCT_PRICE = 2
 WAITING_FOR_CATEGORY_SELECTION = 3
 WAITING_FOR_CONFIRMATION = 4
+WAITING_FOR_EDIT_PRODUCT_NAME = 5
+
+
 
 # تابع شروع مکالمه
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -42,12 +51,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def create_admin_menu():
     buttons = [
         [InlineKeyboardButton("اضافه کردن محصول", callback_data="add_product_menu")],
-        [InlineKeyboardButton("ویرایش محصول", callback_data="edit_product")],
+        [InlineKeyboardButton("ویرایش محصول", callback_data="edit_product_menu")],
         [InlineKeyboardButton("اضافه کردن دسته‌بندی", callback_data="add_category")],
         [InlineKeyboardButton("ویرایش دسته‌بندی", callback_data="edit_category")],
         [InlineKeyboardButton("مشاهده سفارشات", callback_data="view_orders")]
     ]
     return InlineKeyboardMarkup(buttons)
+
+async def back_to_main_menu(update: Update, context: CallbackContext):
+    await update.callback_query.answer()
+    # فراخوانی منوی خانه
+    await update.callback_query.edit_message_text(
+        text="منوی مدیریت",
+        reply_markup=create_admin_menu()
+    )
 
 async def is_admin(user_id: int) -> bool:
     try:
@@ -134,11 +151,10 @@ async def confirm_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE
         return ConversationHandler.END
 
     try:
-        # بررسی اینکه آیا محصول با این نام و قیمت در پایگاه داده وجود دارد یا خیر
+
         db_cursor.execute("SELECT id FROM products WHERE name = %s AND price = %s", (product_name, product_price))
         product_result = db_cursor.fetchone()
 
-        # اگر محصول وجود نداشت، آن را اضافه می‌کنیم
         if not product_result:
             db_cursor.execute("INSERT INTO products (name, price) VALUES (%s, %s)", (product_name, product_price))
             db_connection.commit()
@@ -166,9 +182,12 @@ async def confirm_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE
             else:
                 print(f"Category '{category_name}' not found.")
 
-        await query.edit_message_text(f"✅ محصول `{product_name}` با موفقیت اضافه شد.")
+        category_names = ", ".join(selected_categories)  # دسته‌بندی‌ها را به صورت رشته‌ای از اسم‌ها نمایش می‌دهیم
+        message = f"محصول \"{product_name}\" به قیمت: {product_price} در دسته‌بندی‌های ({category_names}) با موفقیت اضافه شد."
+
+        await query.edit_message_text(message)
         reply_markup = create_admin_menu()
-        await query.edit_message_text("لطفاً یکی از گزینه‌ها را انتخاب کنید.", reply_markup=reply_markup)
+        await query.edit_message_reply_markup(reply_markup=reply_markup)
 
     except mysql.connector.Error as err:
         print(f"خطای پایگاه داده در قسمت confirm_add_product: {err}")
@@ -181,6 +200,126 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ عملیات لغو شد.")
     return ConversationHandler.END
 
+async def send_message(update: Update, message_text: str, reply_markup=None):
+    try:
+        if update.message:
+            message = update.message
+        elif update.callback_query:
+            message = update.callback_query.message
+        else:
+            return
+        await message.reply_text(message_text, reply_markup=reply_markup)
+    except Exception as e:
+        print(f"Error in send_message: {e}")
+
+async def search_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+
+        # از کاربر درخواست جستجو می‌کنیم
+        await query.message.reply_text("لطفا نام محصول مورد نظر خود را وارد کنید:")
+    except Exception as e:
+        print(f"Error in search_products: {e}")
+        await send_message(update, "خطا در جستجو.")
+async def edit_product_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+
+
+async def select_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+
+        # چاپ داده کامل
+        print("Full query data:", query.data)
+
+        # اسپلیت کردن رشته برای جدا کردن شناسه
+        category_id = query.data.split(":")[1]  # جدا کردن شناسه بعد از ":"
+
+        # اصلاح کوئری برای دریافت شناسه محصولات از جدول product_categories
+        query = "SELECT product_id FROM product_categories WHERE category_id = %s"
+        db_cursor.execute(query, (category_id,))
+        product_ids = db_cursor.fetchall()  # دریافت تمامی شناسه‌های محصولات
+
+        # چک کردن اینکه آیا محصولی وجود دارد
+        if product_ids:
+            # ایجاد لیستی برای نام محصولات
+            product_names = []
+
+            # برای هر شناسه محصول، نام آن را از جدول محصولات دریافت می‌کنیم
+            for product_id in product_ids:
+                query = "SELECT name FROM products WHERE id = %s"
+                db_cursor.execute(query, (product_id[0],))  # استفاده از شناسه محصول
+                product_name = db_cursor.fetchone()
+
+                if product_name:
+                    product_names.append(product_name[0])  # ذخیره نام محصول
+
+            # نمایش لیست نام محصولات به کاربر
+            if product_names:
+                keyboard = [
+                    [InlineKeyboardButton(f"{name}", callback_data=f"product:{name}")]
+                    for name in product_names
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await send_message(update, "محصولات این دسته‌بندی:", reply_markup=reply_markup)
+            else:
+                await send_message(update, ":", reply_markup=create_admin_menu)
+        else:
+            await send_message(update, ":", reply_markup=create_admin_menu)
+
+    except Exception as e:
+        print(f'Error: {e}')
+
+
+# تابعی برای دریافت و نمایش تمامی محصولات
+async def show_all_products(update: Update, context: CallbackContext):
+
+    # اجرای کوئری برای دریافت تمامی محصولات
+    query = "SELECT id, name FROM categories"
+    db_cursor.execute(query)
+    # دریافت نتایج کوئری
+    categories = db_cursor.fetchall()
+
+    # query = "SELECT id, name FROM categories"
+    # db_cursor.execute(query)
+    # categories = db_cursor.fetchall()
+    # print(categories)
+
+
+    # بررسی اینکه آیا محصولات وجود دارند یا خیر
+    # if not products:
+    #     await update.message.reply_text("هیچ محصولی در دیتابیس موجود نیست.")
+    #     db_cursor.close()
+    #     db_connection.close()
+    #     return
+
+    keyboard = [
+        [InlineKeyboardButton(f"{category[1]}", callback_data=f"select_category:{category[0]}")]
+        for category in categories
+    ]
+
+
+    # keyboard = [
+    #     [InlineKeyboardButton(f"{product[1]} - {product[0]} تومان", callback_data=f"add_to_cart:{product[0]}")]
+    #     for product in products
+    # ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await send_message(update, "انتخاب دسته بندی:", reply_markup=reply_markup)
+    # # بستن اتصال به دیتابیس
+    # db_cursor.close()
+    # db_connection.close()
+
+
+
+
+
+
+
+# def register_handlers(dp):
+#     dp.add_handler(CommandHandler("show_products", show_all_products))
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -242,4 +381,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await confirm_add_product(update, context)
         return WAITING_FOR_CONFIRMATION
 
+    elif callback_data == 'edit_product_menu':
+        await update.callback_query.answer()
+        search_button = InlineKeyboardButton("🔍 جستجو", callback_data="search_products")
+        all_products_button = InlineKeyboardButton("🔍 مشاهده همه محصولات", callback_data="all_products")
+        back_button = InlineKeyboardButton("بازگشت", callback_data="home_menu_handler")
+        markup = InlineKeyboardMarkup([[all_products_button], [search_button], [back_button]])
+        await send_message(update, "یکی از روش های زیر را انتخاب کنید::", reply_markup=markup)
+
+        return WAITING_FOR_EDIT_PRODUCT_NAME
+
     return WAITING_FOR_CATEGORY_SELECTION
+
+
+
+
+
