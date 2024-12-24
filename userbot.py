@@ -44,7 +44,6 @@ def main():
     application.add_handler(CallbackQueryHandler(increase_quantity, pattern=r"^increase_quantity:"))
     application.add_handler(CallbackQueryHandler(decrease_quantity, pattern=r"^decrease_quantity:"))
 
-    # 📌 مدیریت پیام‌های متنی (فیلتر پیام‌های متنی)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search))
 
     # 📸 مدیریت عکس‌های آپلود شده (فیلتر عکس‌های ارسالی)
