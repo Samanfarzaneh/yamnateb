@@ -3,11 +3,16 @@ import mysql.connector
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ConversationHandler, ContextTypes
 
-from admin.buttons import create_admin_menu
+from admin.buttons import create_admin_menu, cancel_request, restart_conversation
 from db import get_db_connection
 from contextlib import contextmanager
 from .states import WAITING_FOR_PRODUCT_NAME, WAITING_FOR_PRODUCT_PRICE, WAITING_FOR_CATEGORY_SELECTION, \
-    WAITING_FOR_CONFIRMATION
+    WAITING_FOR_CONFIRMATION , ADD_PRODUCT, EDIT_PRODUCT, state_manager, end_conversation_handler
+
+
+
+
+
 
 @contextmanager
 def get_db_cursor():
@@ -22,16 +27,30 @@ def get_db_cursor():
 
 
 async def add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # اول خاتمه دادن به وضعیت قبلی
-    context.user_data.clear()  # ریست کردن داده‌های کاربر
+    context.user_data.clear()
+    context.chat_data.clear()
+    await restart_conversation(update, context)
+    user_id = update.effective_user.id
+    await end_conversation_handler(update, context)
+    # بررسی وضعیت قبلی در chat_data (در صورتی که قبلاً ذخیره شده باشد)
+    if user_id in context.chat_data:
+        print(context.chat_data[user_id])
+    # خاتمه دادن به مکالمه قبلی و پاک کردن وضعیت‌ها
+    await end_conversation_handler(update, context)  # اطمینان از حذف وضعیت قبلی
+    # تنظیم وضعیت جدید
+    state_manager.set_state(user_id, ADD_PRODUCT)
+    # پاک کردن داده‌های مربوط به وضعیت قبلی
+    context.user_data.clear()  # یا می‌توانید فقط chat_data را پاک کنید اگر فقط وضعیت‌ها مدنظر باشند
     await update.callback_query.answer()
-
-    # بعد از آن، وضعیت جدید را شروع کنید
-    await update.callback_query.edit_message_text("❗ لطفاً نام محصول را وارد کنید.")
+    await update.callback_query.message.reply_text("❗ لطفاً نام محصول جدید را وارد کنید.")
     return WAITING_FOR_PRODUCT_NAME
 
+
 async def receive_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
+    user_id = update.effective_user.id
+    if state_manager.get_state(user_id) != ADD_PRODUCT:
+        await update.message.reply_text("❌ شما در وضعیت افزودن محصول نیستید. لطفاً دوباره تلاش کنید.")
+        return ConversationHandler.END
     product_name = update.message.text
     context.user_data['product_name'] = product_name
     with get_db_cursor() as (db_connection, db_cursor):
@@ -49,15 +68,16 @@ async def receive_product_name(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ساخت دکمه‌ها برای دسته‌بندی‌ها
     keyboard = [[InlineKeyboardButton(f"{cat[1]}", callback_data=f'category_{cat[1]}')] for cat in categories ]
-    keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='back_to_name')])
-    # keyboard.append([InlineKeyboardButton("➡️ تایید و مرحله بعد", callback_data='product_price_menu')])
-
+    keyboard.append([InlineKeyboardButton("🔙 بازگشت به مرحله قبل", callback_data='back_to_name')])
+    keyboard.append([InlineKeyboardButton("❌ لفو", callback_data='cancel_request_menu')])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(f"نام محصول: {product_name}\nلطفاً دسته‌بندی محصول را انتخاب کنید.",
                                     reply_markup=reply_markup)
     return WAITING_FOR_CATEGORY_SELECTION
 
 async def receive_product_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    print(f"User state: {state_manager.get_state(user_id)}")
     try:
         product_price = float(update.message.text)
     except ValueError:
@@ -90,6 +110,7 @@ async def receive_product_price(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def confirm_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     # بررسی اینکه آیا callback_query موجود است
     if not update.callback_query:
         logging.error("❌ callback_query موجود نیست.")
@@ -108,11 +129,13 @@ async def confirm_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE
     # بررسی وجود دسته‌بندی‌های انتخابی
     if not selected_categories:
         await query.edit_message_text("❌ هیچ دسته‌بندی‌ای انتخاب نشده است.")
+        state_manager.clear_state()
         return ConversationHandler.END
 
     # بررسی نام و قیمت محصول
     if not product_name or not product_price:
         await query.edit_message_text("❌ نام محصول یا قیمت معتبر وارد نشده است.")
+        state_manager.clear_state(user_id=user_id)
         return ConversationHandler.END
 
     try:
@@ -162,6 +185,7 @@ async def confirm_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE
                 else:
                     # اگر دسته‌بندی پیدا نشد
                     await query.edit_message_text(f"❌ دسته‌بندی '{category_name}' یافت نشد.")
+                    state_manager.clear_state(user_id=user_id)
                     return ConversationHandler.END
 
             # اعمال تغییرات در پایگاه داده پس از انجام تمام کارها
@@ -169,7 +193,7 @@ async def confirm_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         # آماده‌سازی پیام نهایی
         category_names = ", ".join(selected_categories)
-        message = f"محصول \"{product_name}\" به قیمت: {product_price} در دسته‌بندی‌های ({category_names}) با موفقیت اضافه شد."
+        message = f"✅محصول \"{product_name}\" به قیمت: {product_price} در دسته‌بندی‌های ({category_names}) با موفقیت اضافه شد."
         await query.edit_message_text(message, reply_markup=create_admin_menu())
 
     except mysql.connector.Error as err:
@@ -179,5 +203,8 @@ async def confirm_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logging.error(f"خطای غیرمنتظره در confirm_add_product: {str(e)}")
         await query.edit_message_text("❌ خطای غیرمنتظره‌ای رخ داد.")
-
+    context.user_data.clear()
+    state_manager.clear_state(user_id=user_id)
     return ConversationHandler.END
+
+

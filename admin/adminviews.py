@@ -9,10 +9,13 @@ from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, 
 import mysql.connector
 import logging
 from admin.states import WAITING_FOR_PRODUCT_NAME, WAITING_FOR_PRODUCT_PRICE, WAITING_FOR_CATEGORY_SELECTION, \
-    WAITING_FOR_CONFIRMATION, WAITING_FOR_SEARCH_PRODUCT, EDIT_NAME, EDIT_PRICE
-from .buttons import create_admin_menu, send_message
+    WAITING_FOR_CONFIRMATION, WAITING_FOR_SEARCH_PRODUCT, EDIT_PRODUCT, state_manager, WAITING_FOR_EDIT_PRODUCT_NAME, \
+    WAITING_FOR_CONFIRM_ADD_CATEGORY
+from .buttons import create_admin_menu, send_message, cancel_request
+from .category import confirm_add_category
 
 from .edit_product import delete_product, confirm_delete_product
+
 
 
 @contextmanager
@@ -33,7 +36,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await is_admin(user_id):
         reply_markup = create_admin_menu()
         await update.message.reply_text("✅ با موفقیت وارد شدید!\nلطفاً یکی از گزینه‌ها را انتخاب کنید.", reply_markup=reply_markup)
-        return WAITING_FOR_PRODUCT_NAME
+        return
     else:
         await update.message.reply_text("❌ شما دسترسی به این بخش ندارید.")
         return ConversationHandler.END
@@ -136,8 +139,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ {cat[0]}" if cat[0] in context.user_data['selected_categories'] else f"{cat[0]}",
             callback_data=f'category_{cat[0]}'
         )] for cat in categories]
-        keyboard.append([InlineKeyboardButton("🔙 بازگشت", callback_data='back_to_name')])
+        keyboard.append([InlineKeyboardButton("🔙 بازگشت به مرحله قبل", callback_data='back_to_name')])
         keyboard.append([InlineKeyboardButton("➡️ تایید و مرحله بعد", callback_data='product_price_menu')])
+        keyboard.append([InlineKeyboardButton("❌ لفو عملیات", callback_data='cancel_request_menu')])
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await query.edit_message_text(
@@ -160,6 +164,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return WAITING_FOR_CONFIRMATION
 
     elif callback_data == 'edit_product_menu':
+        user_id = update.effective_user.id
+        state_manager.set_state(user_id, EDIT_PRODUCT)
         await update.callback_query.answer()
         search_button = InlineKeyboardButton("🔍 جستجو", callback_data="search_product_for_edit")
         all_products_button = InlineKeyboardButton("🔍 مشاهده همه محصولات", callback_data="all_products")
@@ -172,12 +178,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print("yes")
         await delete_product(update, context)
 
+    elif callback_data == 'confirm_add_category_menu':
+        await confirm_add_category(update, context)
+        return WAITING_FOR_CONFIRM_ADD_CATEGORY
+
+    elif callback_data == 'cancel_request_menu':
+        await update.callback_query.answer()
+        await cancel_request(update, context)
+        return ConversationHandler.END
+
     # elif callback_data == 'search_product_for_edit':
 
-
-
-
     return WAITING_FOR_CATEGORY_SELECTION
+
+
+
 
 
 

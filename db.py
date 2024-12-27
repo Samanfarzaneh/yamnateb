@@ -1,5 +1,3 @@
-# db.py
-
 import mysql.connector
 import json
 
@@ -21,4 +19,22 @@ def get_db_connection():
         return db_connection
     except mysql.connector.Error as err:
         print(f"خطا در اتصال به پایگاه داده: {err}")
+        return None
+
+# مثال استفاده از اتصال و کرسر
+def execute_query(query, params=None):
+    db_connection = get_db_connection()
+    if db_connection:
+        try:
+            # ایجاد کرسر و استفاده از with برای مدیریت خودکار
+            with db_connection.cursor() as cursor:
+                cursor.execute(query, params or ())
+                db_connection.commit()
+                return cursor.fetchall()
+        except mysql.connector.Error as err:
+            print(f"خطا در اجرای کوئری: {err}")
+        finally:
+            db_connection.close()  # بستن اتصال به پایگاه داده
+    else:
+        print("اتصال به پایگاه داده برقرار نشد.")
         return None

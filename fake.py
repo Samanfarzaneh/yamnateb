@@ -80,7 +80,7 @@ try:
         db_connection.commit()
 
         # اضافه کردن یوزر با شناسه 240066845 به دیتابیس
-        user_id = 240066845
+        user_id = 240066845,
         username = 'admin'  # یا نام کاربری دلخواه
         db_cursor.execute("INSERT INTO admin (user_id, username) VALUES (%s, %s) ON DUPLICATE KEY UPDATE username = %s", (user_id, username, username))
         db_connection.commit()
